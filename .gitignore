@@ -1,0 +1,27 @@
+# Build artifacts
+.gradle/
+build/
+*/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+
+# IDE settings
+.idea/
+.kotlin/
+.DS_Store
+
+# Personal settings
+local.properties
+
+# Secrets
+*.jks
+*.keystore
+*.p12
+google-services.json
+
+# Misc
+gradlew
+gradlew.bat
+gradle/wrapper/gradle-wrapper.jar
