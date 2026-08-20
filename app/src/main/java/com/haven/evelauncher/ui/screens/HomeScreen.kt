@@ -66,22 +66,22 @@ fun HomeScreen(
         viewModel.setAnyMenuOpen(showHomeMenu)
     }
 
-    // Unified Transition Logic
+    // High-performance background transition
     val backgroundAlpha by animateFloatAsState(
-        targetValue = if (isAppDrawerVisibleState) 0f else 1f,
-        animationSpec = if (settings.animationsEnabled) tween(300) else snap(),
+        targetValue = if (isAppDrawerVisibleState) 0.4f else 1f, // Dim but keep visible for glass effect
+        animationSpec = if (settings.animationsEnabled) tween(400) else snap(),
         label = "bgAlpha"
     )
 
     val backgroundBlur by animateDpAsState(
-        targetValue = if (showHomeMenu || isSettingsVisible || isAnyMenuOpen) {
+        targetValue = if (showHomeMenu || isSettingsVisible || isAnyMenuOpen || isAppDrawerVisibleState) {
             when(settings.blurIntensity) {
                 BlurIntensity.SUBTLE -> 24.dp
                 BlurIntensity.BALANCED -> 48.dp
-                BlurIntensity.STRONG -> 96.dp
+                BlurIntensity.STRONG -> 80.dp // Slightly reduced for better perf
             }
         } else 0.dp,
-        animationSpec = tween(400),
+        animationSpec = tween(500),
         label = "bgBlur"
     )
 
@@ -109,14 +109,14 @@ fun HomeScreen(
                 detectVerticalDragGestures(
                     onVerticalDrag = { change, dragAmount ->
                         if (!isAppDrawerVisibleState) {
-                            if (dragAmount > 80) { // Highly responsive down swipe
+                            if (dragAmount > 80) {
                                 try {
                                     val service = context.getSystemService("statusbar")
                                     val statusBarManager = Class.forName("android.app.StatusBarManager")
                                     val expandMethod = statusBarManager.getMethod("expandNotificationsPanel")
                                     expandMethod.invoke(service)
                                 } catch (e: Exception) { e.printStackTrace() }
-                            } else if (dragAmount < -15) { // Highly responsive up swipe
+                            } else if (dragAmount < -15) {
                                 change.consume()
                                 viewModel.setAppDrawerVisible(true)
                             }
@@ -126,16 +126,17 @@ fun HomeScreen(
             }
     ) {
 
-        // 1. HOME SCREEN
+        // 1. HOME SCREEN (The Blur Source)
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
                     alpha = backgroundAlpha
                     if (backgroundBlur > 0.dp && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        val blurPx = backgroundBlur.toPx()
                         renderEffect = android.graphics.RenderEffect.createBlurEffect(
-                            backgroundBlur.toPx(),
-                            backgroundBlur.toPx(),
+                            blurPx,
+                            blurPx,
                             android.graphics.Shader.TileMode.CLAMP
                         ).asComposeRenderEffect()
                     }
@@ -173,7 +174,6 @@ fun HomeScreen(
                 ) {
                     WidgetSlot(state = widgetState.slot3.state, modifier = Modifier.weight(1f).aspectRatio(1f), contentColor = widgetContentColor)
                     
-                    // SLOT 4: Dedicated Orbit
                     Box(modifier = Modifier.weight(1f).aspectRatio(1f)) {
                         OrbitWidget(
                             viewModel = viewModel,
@@ -208,11 +208,11 @@ fun HomeScreen(
             )
         }
 
-        // 2. APP DRAWER
+        // 2. APP DRAWER (The Glass Layer)
         AnimatedVisibility(
             visible = isAppDrawerVisibleState,
-            enter = if (settings.animationsEnabled) fadeIn() + slideInVertically(initialOffsetY = { it }) else fadeIn(snap()) + slideInVertically(snap(), initialOffsetY = { it }),
-            exit = if (settings.animationsEnabled) fadeOut() + slideOutVertically(targetOffsetY = { it }) else fadeOut(snap()) + slideOutVertically(snap(), targetOffsetY = { it })
+            enter = if (settings.animationsEnabled) fadeIn(tween(400)) + slideInVertically(tween(400), initialOffsetY = { it / 2 }) else fadeIn(snap()),
+            exit = if (settings.animationsEnabled) fadeOut(tween(300)) + slideOutVertically(tween(300), targetOffsetY = { it / 2 }) else fadeOut(snap())
         ) {
             AppDrawer(
                 viewModel = viewModel,

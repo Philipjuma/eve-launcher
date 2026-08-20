@@ -163,61 +163,54 @@ class HomeViewModel(
                 } catch (e: Exception) {
                     _notificationApps.value = emptyList()
                 }
-                kotlinx.coroutines.delay(3000) // Slightly slower for stability
+                kotlinx.coroutines.delay(3000) 
             }
         }
     }
 
     fun loadApps() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Default) { // Use background thread
             try {
-                val apps = withContext(Dispatchers.IO) {
-                    launcherService.getInstalledApps().map { app ->
-                        val isFav = favPrefs.getBoolean(app.packageName, false)
-                        val lastUsed = lastUsedPrefs.getLong(app.packageName, app.lastUsed)
-                        app.copy(isFavorite = isFav, lastUsed = lastUsed)
-                    }
+                val apps = launcherService.getInstalledApps().map { app ->
+                    val isFav = favPrefs.getBoolean(app.packageName, false)
+                    val lastUsed = lastUsedPrefs.getLong(app.packageName, app.lastUsed)
+                    app.copy(isFavorite = isFav, lastUsed = lastUsed)
                 }
                 _allApps.value = apps
                 contextEngine.updateOrbit(apps)
 
                 val savedPkgs = prefs.getString("dock_apps", "") ?: ""
                 if (savedPkgs.isNotEmpty()) {
-                    val resolvedDock = withContext(Dispatchers.IO) {
-                        savedPkgs.split(",").mapNotNull { pkg ->
-                            launcherService.getAppByPackage(pkg)?.let { app ->
-                                val isFav = favPrefs.getBoolean(app.packageName, false)
-                                app.copy(isFavorite = isFav)
-                            }
+                    val resolvedDock = savedPkgs.split(",").mapNotNull { pkg ->
+                        launcherService.getAppByPackage(pkg)?.let { app ->
+                            val isFav = favPrefs.getBoolean(app.packageName, false)
+                            app.copy(isFavorite = isFav)
                         }
                     }
                     _dockApps.value = resolvedDock
                 } else if (_dockApps.value.isEmpty()) {
-                    _dockApps.value = withContext(Dispatchers.IO) {
-                        val dialer = launcherService.getDialerApp()
-                        val messages = launcherService.getAppByPackage("com.google.android.apps.messaging") 
-                            ?: launcherService.getAppByPackage("com.android.messaging")
-                            ?: launcherService.getAppByPackage("com.samsung.android.messaging")
-                        val chrome = launcherService.getAppByPackage("com.android.chrome")
-                            ?: launcherService.getAppByPackage("com.google.android.browser")
-                            ?: launcherService.getAppByPackage("org.mozilla.firefox")
-                        val camera = launcherService.getCameraApp()
-                        
-                        val initialDock = listOfNotNull(dialer, messages, chrome, camera)
-                        
-                        // If we still have fewer than 4, fill with most used
-                        val finalDock = if (initialDock.size < 4) {
-                            val mostUsed = apps.sortedByDescending { it.lastUsed }
-                                .filter { app -> !initialDock.any { it.packageName == app.packageName } }
-                                .take(4 - initialDock.size)
-                            initialDock + mostUsed
-                        } else {
-                            initialDock
-                        }
-
-                        saveDockToPrefs(finalDock)
-                        finalDock
+                    val dialer = launcherService.getDialerApp()
+                    val messages = launcherService.getAppByPackage("com.google.android.apps.messaging") 
+                        ?: launcherService.getAppByPackage("com.android.messaging")
+                        ?: launcherService.getAppByPackage("com.samsung.android.messaging")
+                    val chrome = launcherService.getAppByPackage("com.android.chrome")
+                        ?: launcherService.getAppByPackage("com.google.android.browser")
+                        ?: launcherService.getAppByPackage("org.mozilla.firefox")
+                    val camera = launcherService.getCameraApp()
+                    
+                    val initialDock = listOfNotNull(dialer, messages, chrome, camera)
+                    
+                    val finalDock = if (initialDock.size < 4) {
+                        val mostUsed = apps.sortedByDescending { it.lastUsed }
+                            .filter { app -> !initialDock.any { it.packageName == app.packageName } }
+                            .take(4 - initialDock.size)
+                        initialDock + mostUsed
+                    } else {
+                        initialDock
                     }
+
+                    saveDockToPrefs(finalDock)
+                    _dockApps.value = finalDock
                 }
             } catch (e: Exception) {
                 // Fail gracefully

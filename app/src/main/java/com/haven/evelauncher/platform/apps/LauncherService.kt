@@ -8,6 +8,8 @@ import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class AppInfo(
     val label: String,
@@ -15,37 +17,42 @@ data class AppInfo(
     val componentName: String, // Fully qualified activity name
     val icon: Drawable,
     val iconBitmap: ImageBitmap,
-    val launchIntent: Intent?,
     val lastUsed: Long = 0L,
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    val launchIntent: Intent? = null
 )
 
 class LauncherService(private val context: Context) {
-    // Memory-efficient Icon Cache (Premium approach)
-    private val iconCache = LruCache<String, ImageBitmap>(100)
+    // Memory-efficient Icon Cache for Rendered Bitmaps
+    // Increased to 500 to cover almost all user apps without re-rendering
+    private val iconCache = LruCache<String, ImageBitmap>(500)
 
-    fun getInstalledApps(): List<AppInfo> {
+    suspend fun getInstalledApps(): List<AppInfo> = withContext(Dispatchers.IO) {
         val pm = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN, null).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
         
-        return try {
+        try {
             pm.queryIntentActivities(intent, 0).mapNotNull { resolveInfo ->
                 try {
                     val pkg = resolveInfo.activityInfo.packageName
                     val cls = resolveInfo.activityInfo.name
+                    val cacheKey = "$pkg/$cls"
+                    
+                    var bitmap = iconCache.get(cacheKey)
+                    val label = resolveInfo.loadLabel(pm).toString()
                     val icon = resolveInfo.loadIcon(pm)
                     
-                    val cacheKey = "$pkg/$cls"
-                    var bitmap = iconCache.get(cacheKey)
                     if (bitmap == null) {
-                        bitmap = icon.toBitmap(256, 256, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
+                        // Render vector/drawable to bitmap once and cache
+                        // 160x160 is plenty for app icons, saves memory over 256x256
+                        bitmap = icon.toBitmap(160, 160, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
                         iconCache.put(cacheKey, bitmap)
                     }
 
                     AppInfo(
-                        label = resolveInfo.loadLabel(pm).toString(),
+                        label = label,
                         packageName = pkg,
                         componentName = cls,
                         icon = icon,
@@ -62,22 +69,28 @@ class LauncherService(private val context: Context) {
         }
     }
 
-    fun getAppByPackage(packageName: String): AppInfo? {
+    suspend fun getAppByPackage(packageName: String): AppInfo? = withContext(Dispatchers.IO) {
         val pm = context.packageManager
-        return try {
+        try {
             val appInfo = pm.getApplicationInfo(packageName, 0)
             val launchIntent = pm.getLaunchIntentForPackage(packageName)
             val icon = pm.getApplicationIcon(appInfo)
             
             val componentName = launchIntent?.component?.className ?: ""
-            val bitmap = getIconBitmap(packageName + componentName, icon)
+            val cacheKey = "$packageName/$componentName"
+            
+            var bitmap = iconCache.get(cacheKey)
+            if (bitmap == null) {
+                bitmap = icon.toBitmap(160, 160, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
+                iconCache.put(cacheKey, bitmap)
+            }
             
             AppInfo(
                 label = pm.getApplicationLabel(appInfo).toString(),
                 packageName = packageName,
                 componentName = componentName,
                 icon = icon,
-                iconBitmap = bitmap,
+                iconBitmap = bitmap!!,
                 launchIntent = launchIntent,
                 lastUsed = System.currentTimeMillis()
             )
@@ -86,37 +99,20 @@ class LauncherService(private val context: Context) {
         }
     }
 
-    fun getDialerApp(): AppInfo? {
-        return try {
-            val intent = Intent(Intent.ACTION_DIAL)
-            resolveFirstApp(intent)
-        } catch (e: Exception) {
-            null
-        }
+    suspend fun getDialerApp(): AppInfo? = withContext(Dispatchers.IO) {
+        val intent = Intent(Intent.ACTION_DIAL)
+        resolveFirstApp(intent)
     }
 
-    fun getCameraApp(): AppInfo? {
-        return try {
-            val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
-            resolveFirstApp(intent)
-        } catch (e: Exception) {
-            null
-        }
+    suspend fun getCameraApp(): AppInfo? = withContext(Dispatchers.IO) {
+        val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+        resolveFirstApp(intent)
     }
 
-    private fun resolveFirstApp(intent: Intent): AppInfo? {
+    private suspend fun resolveFirstApp(intent: Intent): AppInfo? {
         val pm = context.packageManager
         val resolveInfo = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
         return resolveInfo?.activityInfo?.packageName?.let { getAppByPackage(it) }
-    }
-
-    private fun getIconBitmap(packageName: String, icon: Drawable): ImageBitmap {
-        var bitmap = iconCache.get(packageName)
-        if (bitmap == null) {
-            bitmap = icon.toBitmap(256, 256, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
-            iconCache.put(packageName, bitmap)
-        }
-        return bitmap!!
     }
 
     fun launchApp(app: AppInfo) {

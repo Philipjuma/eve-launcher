@@ -1,7 +1,11 @@
 package com.haven.evelauncher
 
+import android.view.WindowManager
+import android.view.Surface
 import android.app.WallpaperManager
+import android.content.BroadcastReceiver
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -35,6 +39,14 @@ import com.haven.evelauncher.ui.screens.OnboardingScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Enable High Refresh Rate support (API 30+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.attributes.preferredDisplayModeId = 0
+            // Some devices need this for 90/120Hz consistency
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        
         enableEdgeToEdge()
         
         setContent {
@@ -69,6 +81,20 @@ class MainActivity : ComponentActivity() {
             DisposableEffect(Unit) {
                 motionManager.start()
                 
+                // Package Change Receiver to refresh apps
+                val packageReceiver = object : BroadcastReceiver() {
+                    override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                        homeViewModel.loadApps()
+                    }
+                }
+                val filter = IntentFilter().apply {
+                    addAction(Intent.ACTION_PACKAGE_ADDED)
+                    addAction(Intent.ACTION_PACKAGE_REMOVED)
+                    addAction(Intent.ACTION_PACKAGE_REPLACED)
+                    addDataScheme("package")
+                }
+                context.registerReceiver(packageReceiver, filter)
+
                 // Wallpaper Colors Listener
                 val wallpaperManager = WallpaperManager.getInstance(context)
                 val listener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -95,6 +121,10 @@ class MainActivity : ComponentActivity() {
 
                 onDispose {
                     motionManager.stop()
+                    try {
+                        context.unregisterReceiver(packageReceiver)
+                    } catch (e: Exception) { }
+                    
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 && listener != null) {
                         wallpaperManager.removeOnColorsChangedListener(listener)
                     }

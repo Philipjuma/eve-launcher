@@ -25,33 +25,25 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.util.lerp
 import com.haven.evelauncher.design.settings.LocalEveSettings
 import com.haven.evelauncher.design.motion.eveBouncingIcon
 import com.haven.evelauncher.design.motion.evePressable
 import com.haven.evelauncher.platform.apps.AppInfo
 import com.haven.evelauncher.ui.HomeViewModel
 import com.haven.evelauncher.ui.theme.EveTypography
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.haze
-import dev.chrisbanes.haze.hazeChild
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
 
 @Composable
 fun AppDrawer(
@@ -75,42 +67,20 @@ fun AppDrawer(
         viewModel.setAnyMenuOpen(selectedAppForMenu != null)
     }
 
-    // Live Backdrop Blur State - Optimized
-    val hazeState = remember { HazeState() }
-
-    // Dynamic Dark Blur Background for Menu
-    val menuDim by animateFloatAsState(
-        targetValue = if (selectedAppForMenu != null) 0.65f else 0.85f,
-        animationSpec = tween(200),
-        label = "menuDim"
-    )
-
     val alphabet = remember { ('A'..'Z').toList() }
     var activeLetter by remember { mutableStateOf<Char?>(null) }
     
+    // Smooth nested scroll closure
     var atTop by remember { mutableStateOf(true) }
-    var atBottom by remember { mutableStateOf(false) }
-
-    LaunchedEffect(gridState, filteredApps) {
-        snapshotFlow { 
-            val firstVisible = gridState.firstVisibleItemIndex
-            val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val totalItems = filteredApps.size
-            (firstVisible == 0 && gridState.firstVisibleItemScrollOffset == 0) to (lastVisible >= totalItems - 1)
-        }.collect { (top, bottom) ->
-            atTop = top
-            atBottom = bottom
-        }
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0 }
+            .collect { atTop = it }
     }
 
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (atTop && available.y > 40 && source == NestedScrollSource.UserInput) {
-                    onClose()
-                    return Offset(0f, available.y)
-                }
-                if (atBottom && available.y < -40 && source == NestedScrollSource.UserInput) {
+                if (atTop && available.y > 60 && source == NestedScrollSource.UserInput) {
                     onClose()
                     return Offset(0f, available.y)
                 }
@@ -118,228 +88,166 @@ fun AppDrawer(
             }
         }
     }
-    
-    val flingBehavior = ScrollableDefaults.flingBehavior()
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .nestedScroll(nestedScrollConnection)
-            .background(Color.Black.copy(alpha = menuDim)) // Optimized: Direct background instead of full-screen glass
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            // 1. THE SCROLLING SOURCE
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .haze(hazeState) // Haze on the list container
-            ) {
+        // 1. THE GLASS SURFACE (Restored premium depth)
+        EveGlassSurface(
+            modifier = Modifier.fillMaxSize(),
+            cornerRadius = 0.dp,
+            isDark = true,
+            alpha = 0.75f // Slightly lower alpha for better background visibility (more "glassy")
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                
+                // 2. THE GRID (Highly Optimized)
                 if (filteredApps.isEmpty() && searchQuery.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 160.dp),
-                        contentAlignment = Alignment.TopCenter
-                    ) {
-                        EmptySearchView(
-                            query = searchQuery,
-                            onPlayStore = {
-                                try {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=$searchQuery"))
-                                    context.startActivity(intent)
-                                } catch (e: Exception) { e.printStackTrace() }
-                            },
-                            onWebSearch = {
-                                try {
-                                    val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
-                                        putExtra("query", searchQuery)
-                                    }
-                                    context.startActivity(intent)
-                                } catch (e: Exception) { e.printStackTrace() }
-                            }
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 160.dp), contentAlignment = Alignment.TopCenter) {
+                        EmptySearchView(query = searchQuery, 
+                            onPlayStore = { try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=$searchQuery"))) } catch(e:Exception){} },
+                            onWebSearch = { try { context.startActivity(Intent(Intent.ACTION_WEB_SEARCH).apply { putExtra("query", searchQuery) }) } catch(e:Exception){} }
                         )
                     }
                 } else {
                     LazyVerticalGrid(
                         state = gridState,
                         columns = GridCells.Fixed(settings.appDrawerColumns),
-                        contentPadding = PaddingValues(top = 136.dp, bottom = 120.dp, start = 36.dp, end = 52.dp), 
-                        verticalArrangement = Arrangement.spacedBy(24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        modifier = Modifier.fillMaxSize(),
-                        flingBehavior = flingBehavior
+                        contentPadding = PaddingValues(top = 136.dp, bottom = 120.dp, start = 24.dp, end = 48.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         itemsIndexed(
-                            items = filteredApps, 
-                            key = { index, app -> "${app.packageName}/${app.componentName}/$index" } 
+                            items = filteredApps,
+                            key = { _, app -> "${app.packageName}/${app.componentName}" },
+                            contentType = { _, _ -> "app_item" } // Optimization: Help grid recycle items of same type
                         ) { index, app ->
                             val isBouncing = activeLetter != null && app.label.startsWith(activeLetter!!, ignoreCase = true)
                             AppItem(
-                                app = app, 
+                                app = app,
                                 bounceEnabled = isBouncing,
-                                staggerDelay = (index % 4) * 40,
+                                staggerDelay = (index % 4) * 30,
                                 onClick = { viewModel.launchApp(app) },
-                                onLongClick = { 
+                                onLongClick = {
                                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    selectedAppForMenu = app 
+                                    selectedAppForMenu = app
                                 }
                             )
                         }
                     }
                 }
-            }
 
-            // 2. THE SEARCH BAR (Glass Bar) - Simplified for extreme smoothness
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 64.dp)
-                    .padding(horizontal = 32.dp)
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .hazeChild(
-                        state = hazeState,
-                        style = HazeStyle(
-                            blurRadius = 12.dp, // Further reduced for performance
-                            tint = HazeTint(Color.White.copy(alpha = 0.15f)),
-                            noiseFactor = 0f
-                        )
-                    )
-                    .drawBehind {
-                        // Top-weighted light rim
-                        drawRoundRect(
-                            brush = Brush.linearGradient(
-                                colors = listOf(Color.White.copy(alpha = 0.4f), Color.Transparent),
-                                start = Offset(0f, 0f),
-                                end = Offset(size.width, size.height)
-                            ),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(28.dp.toPx()),
-                            style = Stroke(width = 1.dp.toPx())
-                        )
-                    },
-                contentAlignment = Alignment.CenterStart
-            ) {
-                TextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.onSearchQueryChanged(it) },
-                    modifier = Modifier.fillMaxWidth(),
-                    textStyle = EveTypography.WidgetPrimary.copy(
-                        textAlign = TextAlign.Center,
-                        color = Color(0xFFA8FFD0)
-                    ),
-                    placeholder = { 
-                        Text(
-                            "Search", 
-                            style = EveTypography.WidgetPrimary,
-                            color = Color(0xFFA8FFD0).copy(alpha = 0.6f),
+                // 3. THE SEARCH BAR (Floating Glass)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 64.dp)
+                        .padding(horizontal = 24.dp)
+                        .height(56.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    EveGlassCard(
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadius = 28.dp
+                    ) {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { viewModel.onSearchQueryChanged(it) },
                             modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center
-                        ) 
-                    },
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        cursorColor = Color(0xFFA8FFD0),
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        focusedTextColor = Color(0xFFA8FFD0),
-                        unfocusedTextColor = Color(0xFFA8FFD0)
-                    ),
-                    singleLine = true
-                )
-            }
+                            textStyle = EveTypography.WidgetPrimary.copy(
+                                textAlign = TextAlign.Center, 
+                                color = Color(0xFFA8FFD0),
+                                fontWeight = FontWeight.Bold
+                            ),
+                            placeholder = { 
+                                Text(
+                                    "Search Apps", 
+                                    style = EveTypography.WidgetPrimary, 
+                                    color = Color(0xFFA8FFD0).copy(alpha = 0.6f), 
+                                    modifier = Modifier.fillMaxWidth(), 
+                                    textAlign = TextAlign.Center,
+                                    fontWeight = FontWeight.Bold
+                                ) 
+                            },
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                cursorColor = Color(0xFFA8FFD0),
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                focusedTextColor = Color(0xFFA8FFD0),
+                                unfocusedTextColor = Color(0xFFA8FFD0)
+                            ),
+                            singleLine = true
+                        )
+                    }
+                }
 
-            // A-Z Slider
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(44.dp)
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 4.dp), 
-                contentAlignment = Alignment.Center
-            ) {
-                EveAlphabetRail(
-                    alphabet = alphabet,
-                    onLetterSelected = { letter: Char ->
-                        activeLetter = letter
-                        viewModel.onSearchQueryChanged(letter.toString())
-                        if (searchQuery.isEmpty()) {
-                            val index = filteredApps.indexOfFirst { it.label.startsWith(letter, ignoreCase = true) }
-                            if (index != -1) {
-                                scope.launch { gridState.scrollToItem(index) }
+                // 4. ALPHABET RAIL
+                Box(modifier = Modifier.fillMaxHeight().width(40.dp).align(Alignment.CenterEnd).padding(end = 4.dp), contentAlignment = Alignment.Center) {
+                    EveAlphabetRail(
+                        alphabet = alphabet,
+                        onLetterSelected = { letter ->
+                            activeLetter = letter
+                            viewModel.onSearchQueryChanged(letter.toString())
+                            if (searchQuery.isEmpty()) {
+                                val idx = filteredApps.indexOfFirst { it.label.startsWith(letter, ignoreCase = true) }
+                                if (idx != -1) scope.launch { gridState.scrollToItem(idx) }
                             }
                         }
-                    }
-                )
+                    )
+                }
             }
         }
-    }
-    
-    // Context Menu (omitted unchanged for brevity, but kept in file)
-    if (selectedAppForMenu != null) {
-        val app = selectedAppForMenu!!
-        val isInDock = dockApps.any { it.packageName == app.packageName }
-        val appNotifs = viewModel.getNotificationsForPackage(app.packageName)
 
-        EveContextMenu(
-            onDismiss = { selectedAppForMenu = null },
-            title = app.label,
-            notifications = appNotifs.map { sbn ->
-                val extras = sbn.notification.extras
-                NotificationPreview(
-                    title = extras.getString("android.title") ?: "Alert",
-                    text = extras.getCharSequence("android.text")?.toString() ?: "",
-                    onClick = { 
+        // 5. CONTEXT MENU
+        if (selectedAppForMenu != null) {
+            val app = selectedAppForMenu!!
+            val isInDock = dockApps.any { it.packageName == app.packageName }
+            val appNotifs = viewModel.getNotificationsForPackage(app.packageName)
+
+            EveContextMenu(
+                onDismiss = { selectedAppForMenu = null },
+                title = app.label,
+                notifications = appNotifs.map { sbn ->
+                    val extras = sbn.notification.extras
+                    NotificationPreview(
+                        title = extras.getString("android.title") ?: "Alert",
+                        text = extras.getCharSequence("android.text")?.toString() ?: "",
+                        onClick = { try { sbn.notification.contentIntent?.send() } catch (e: Exception) { viewModel.launchApp(app) } }
+                    )
+                },
+                actions = listOfNotNull(
+                    ContextAction(label = if (app.isFavorite) "Remove Favorite" else "Favorite", icon = if (app.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, onClick = { viewModel.toggleFavorite(app) }),
+                    if (!isInDock) ContextAction("Add to Dock", Icons.Default.Add, { viewModel.addToDock(app) }) else null,
+                    if (isInDock) ContextAction("Remove from Dock", Icons.Default.Delete, { viewModel.removeFromDock(app) }) else null,
+                    ContextAction("App Info", Icons.Default.Info, { try { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Exception) {} }),
+                    ContextAction("Uninstall", Icons.Default.Delete, {
                         try {
-                            sbn.notification.contentIntent?.send()
+                            val intent = Intent(Intent.ACTION_DELETE).apply {
+                                data = Uri.parse("package:${app.packageName}")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                            selectedAppForMenu = null // Close menu
                         } catch (e: Exception) {
-                            viewModel.launchApp(app)
+                            e.printStackTrace()
                         }
-                    }
+                    }, isDestructive = true)
                 )
-            },
-            actions = listOfNotNull(
-                ContextAction(
-                    label = if (app.isFavorite) "Remove Favorite" else "Favorite", 
-                    icon = if (app.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, 
-                    onClick = { viewModel.toggleFavorite(app) }
-                ),
-                if (!isInDock) ContextAction("Add to Dock", Icons.Default.Add, { viewModel.addToDock(app) }) else null,
-                if (isInDock) ContextAction("Remove from Dock", Icons.Default.Delete, { viewModel.removeFromDock(app) }) else null,
-                ContextAction("App Info", Icons.Default.Info, {
-                    try {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}"))
-                        context.startActivity(intent)
-                    } catch (e: Exception) { e.printStackTrace() }
-                }),
-                ContextAction("Uninstall", Icons.Default.Delete, {
-                    try {
-                        val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:${app.packageName}"))
-                        context.startActivity(intent)
-                    } catch (e: Exception) { e.printStackTrace() }
-                }, isDestructive = true),
-                ContextAction("Share", Icons.Default.Share, {
-                    try {
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, "Check out ${app.label}: https://play.google.com/store/apps/details?id=${app.packageName}")
-                        }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share ${app.label}"))
-                    } catch (e: Exception) { e.printStackTrace() }
-                })
             )
-        )
+        }
     }
 
     LaunchedEffect(searchQuery) {
-        if (searchQuery.isNotEmpty()) {
-            activeLetter = searchQuery.first().uppercaseChar()
-        }
+        if (searchQuery.isNotEmpty()) activeLetter = searchQuery.first().uppercaseChar()
     }
-
     LaunchedEffect(activeLetter) {
         if (activeLetter != null) {
-            kotlinx.coroutines.delay(800)
+            delay(600)
             activeLetter = null
         }
     }
@@ -416,43 +324,37 @@ fun AppItem(
         modifier = modifier
             .padding(4.dp)
             .graphicsLayer { 
+                // Always use hardware layer during scroll for zero-parsing/zero-rendering overhead
                 clip = true
+                shape = RoundedCornerShape(12.dp)
             }
             .evePressable()
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onClick() },
-                    onLongPress = { onLongClick() }
-                )
+            .pointerInput(app.packageName) {
+                detectTapGestures(onTap = { onClick() }, onLongPress = { onLongClick() })
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.eveBouncingIcon(enabled = bounceEnabled, delay = staggerDelay)
-        ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.eveBouncingIcon(enabled = bounceEnabled, delay = staggerDelay)) {
+            // Static high-perf shadow
             Box(
                 modifier = Modifier
-                    .size(56.dp)
+                    .size(52.dp)
                     .offset(y = 4.dp)
                     .drawBehind {
                         drawCircle(
                             brush = Brush.radialGradient(
-                                0.0f to Color.Black.copy(alpha = 0.45f),
-                                0.8f to Color.Black.copy(alpha = 0.1f),
+                                0.0f to Color.Black.copy(alpha = 0.4f),
+                                0.7f to Color.Black.copy(alpha = 0.1f),
                                 1.0f to Color.Transparent
                             ),
                             radius = size.width * 0.6f
                         )
                     }
             )
-            
             Image(
                 bitmap = app.iconBitmap,
                 contentDescription = app.label,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp))
             )
         }
         Text(
